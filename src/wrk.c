@@ -5,6 +5,7 @@
 #include "main.h"
 #include "hdr_histogram.h"
 #include "stats.h"
+#include <time.h>
 
 // Max recordable latency of 1 day
 #define MAX_LATENCY 24L * 60 * 60 * 1000000
@@ -540,6 +541,14 @@ static int response_complete(http_parser *parser) {
         expected_latency_start = c->thread_start +
                 ((c->complete ) / c->throughput);
         printf("  next expected_latency_start = %lld\n", expected_latency_start);
+
+        // Recompute and guard to avoid recording a negative value,
+        // which would crash HdrHistogram.
+        expected_latency_timing = now - expected_latency_start;
+        if (expected_latency_timing < 0) {
+            // As a last resort, clamp to 0 usec
+            expected_latency_timing = 0;
+        }
     }
 
     c->latest_should_send_time = 0;
@@ -673,9 +682,15 @@ static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
 }
 
 static uint64_t time_us() {
-    struct timeval t;
-    gettimeofday(&t, NULL);
-    return (t.tv_sec * 1000000) + t.tv_usec;
+    struct timespec ts;
+#ifdef CLOCK_MONOTONIC_RAW
+    clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
+#else
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+#endif
+    // Convert to microseconds
+    return (uint64_t)ts.tv_sec * 1000000ULL
+         + (uint64_t)(ts.tv_nsec / 1000ULL);
 }
 
 static char *copy_url_part(char *url, struct http_parser_url *parts, enum http_parser_url_fields field) {
