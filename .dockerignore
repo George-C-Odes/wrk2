@@ -1,0 +1,12 @@
+**/.git
+**/.idea
+**/.vscode
+**/obj
+**/*.o
+**/*.a
+**/*.so
+**/*.dylib
+**/*.dll
+**/.env
+wrk
+**/.buildx-cache

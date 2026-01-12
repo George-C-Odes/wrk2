@@ -7,6 +7,8 @@
 #include "stats.h"
 #include <time.h>
 
+#include "ready_server.h"
+
 // Max recordable latency of 1 day
 #define MAX_LATENCY 24L * 60 * 60 * 1000000
 
@@ -25,6 +27,7 @@ static struct config {
     char    *host;
     char    *script;
     SSL_CTX *ctx;
+    uint64_t ready_port;
 } cfg;
 
 static struct {
@@ -65,6 +68,8 @@ static void usage() {
            "    -B, --batch_latency    Measure latency of whole   \n"
            "                           batches of pipelined ops   \n"
            "                           (as opposed to each op)    \n"
+           "        --ready-port  <N>  Expose GET /ready on 127.0.0.1:<N>\n"
+           "                           (returns 200 {\"status\":\"UP\"})\n"
            "    -v, --version          Print version details      \n"
            "    -R, --rate        <T>  work rate (throughput)     \n"
            "                           in requests/sec (total)    \n"
@@ -79,9 +84,40 @@ int main(int argc, char **argv) {
     char *url, **headers = zmalloc(argc * sizeof(char *));
     struct http_parser_url parts = {};
 
+    // If invoked with only --ready-port (no URL / no -R), treat it as a
+    // readiness-only mode: start the readiness server and block.
+    // This is useful for container health checks.
+    if (argc >= 3 && strcmp(argv[1], "--ready-port") == 0) {
+        uint64_t rp = 0;
+        if (scan_metric(argv[2], &rp) == 0 && rp > 0 && rp <= 65535) {
+            // Try parsing normally first; if it fails, fall back to readiness-only.
+            // This preserves existing CLI behavior when a full workload is provided.
+            if (parse_args(&cfg, &url, &parts, headers, argc, argv)) {
+                ready_server ready = { .fd = -1, .port = 0 };
+                if (ready_server_start(&ready, (uint16_t)rp) != 0) {
+                    fprintf(stderr, "unable to start readiness server on 127.0.0.1:%"PRIu64"\n", rp);
+                    exit(1);
+                }
+                for (;;) pause();
+            }
+        }
+    }
+
     if (parse_args(&cfg, &url, &parts, headers, argc, argv)) {
         usage();
         exit(1);
+    }
+
+    ready_server ready = { .fd = -1, .port = 0 };
+    if (cfg.ready_port) {
+        if (cfg.ready_port > 65535) {
+            fprintf(stderr, "invalid --ready-port: %"PRIu64"\n", cfg.ready_port);
+            exit(1);
+        }
+        if (ready_server_start(&ready, (uint16_t)cfg.ready_port) != 0) {
+            fprintf(stderr, "unable to start readiness server on 127.0.0.1:%"PRIu64"\n", cfg.ready_port);
+            exit(1);
+        }
     }
 
     char *schema  = copy_url_part(url, &parts, UF_SCHEMA);
@@ -243,6 +279,10 @@ int main(int argc, char **argv) {
         script_summary(L, runtime_us, complete, bytes);
         script_errors(L, &errors);
         script_done(L, latency_stats, statistics.requests);
+    }
+
+    if (cfg.ready_port) {
+        ready_server_stop(&ready);
     }
 
     return 0;
@@ -716,6 +756,7 @@ static struct option longopts[] = {
     { "u_latency",      no_argument,       NULL, 'U' },
     { "batch_latency",  no_argument,       NULL, 'B' },
     { "timeout",        required_argument, NULL, 'T' },
+    { "ready-port",     required_argument, NULL,  0  },
     { "help",           no_argument,       NULL, 'h' },
     { "version",        no_argument,       NULL, 'v' },
     { "rate",           required_argument, NULL, 'R' },
@@ -732,8 +773,10 @@ static int parse_args(struct config *cfg, char **url, struct http_parser_url *pa
     cfg->timeout     = SOCKET_TIMEOUT_MS;
     cfg->rate        = 0;
     cfg->record_all_responses = true;
+    cfg->ready_port  = 0;
 
-    while ((c = getopt_long(argc, argv, "t:c:d:s:H:T:R:LUBrv?", longopts, NULL)) != -1) {
+    int longindex = 0;
+    while ((c = getopt_long(argc, argv, "t:c:d:s:H:T:R:LUBrv?", longopts, &longindex)) != -1) {
         switch (c) {
             case 't':
                 if (scan_metric(optarg, &cfg->threads)) return -1;
@@ -766,6 +809,11 @@ static int parse_args(struct config *cfg, char **url, struct http_parser_url *pa
                 break;
             case 'R':
                 if (scan_metric(optarg, &cfg->rate)) return -1;
+                break;
+            case 0:
+                if (!strcmp(longopts[longindex].name, "ready-port")) {
+                    if (scan_metric(optarg, &cfg->ready_port)) return -1;
+                }
                 break;
             case 'v':
                 printf("wrk %s [%s] ", VERSION, aeGetApiName());

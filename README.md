@@ -273,6 +273,25 @@
   request, and use of response() will necessarily reduce the amount of load
   that can be generated.
 
+## Readiness endpoint (optional)
+
+wrk2 is primarily an HTTP client load generator and does not normally expose any HTTP server endpoints.
+
+For environments that need a simple in-process readiness probe, wrk2 can optionally start a tiny HTTP listener:
+
+- Enable with: `--ready-port <port>`
+- Endpoint: `GET /ready`
+- Response: HTTP `200` with body `{"status":"UP"}`
+
+Binding:
+- By default the readiness server binds to `0.0.0.0` (so Docker port publishing works).
+- To bind to loopback only, set `WRK2_READY_BIND=127.0.0.1`.
+
+Notes:
+- The readiness listener is intentionally minimal.
+- Implemented with POSIX sockets/pthreads.
+
+
 ## Acknowledgements
 
   wrk2 is obviously based on wrk, and credit goes to wrk's authors for
@@ -726,3 +745,76 @@ Example 2: [1.4 second ^Z artifact introduced on the httpd server]:
     Transfer/sec:    676.57KB
 
 [CO example]:https://raw.github.com/giltene/wrk2/master/CoordinatedOmission/wrk2_CleanVsCO.png "Coordinated Omission example"
+
+## Docker
+
+This repo includes a multi-stage Docker build under `docker/`.
+
+### Docker Build
+
+Build with buildkit (recommended):
+```powershell
+docker buildx build -f docker/Dockerfile -t wrk2:local .
+```
+
+Build without buildkit present (slower):
+```bash
+docker build -f docker/Dockerfile -t wrk2:local .
+```
+
+### Docker Compose
+
+You can run wrk2 via docker compose.
+
+Compose will include a build if the image is not present.
+
+The default compose setup starts `wrk2` in readiness-only mode and maps it to the host:
+
+- container: `:3003`
+- host: `localhost:3003`
+
+Start it:
+
+```bash
+docker compose -f docker/docker-compose.yml up -d --build
+```
+
+Healthcheck:
+
+```bash
+curl http://localhost:3003/ready
+```
+
+All output from the container's main process is written to the Docker logs (container stdout/stderr). For example:
+
+```bash
+docker logs -f wrk2
+```
+
+Note: if you run `/wrk2/wrk` via an interactive `docker exec -it ...` session, the output is attached to that exec TTY and will not necessarily appear in `docker logs`. If you want the benchmark output to end up in Docker logs, run without allocating a TTY, e.g.:
+
+```bash
+docker exec wrk2 /wrk2/wrk -t2 -c10 -d10s -R1000 http://example.com/
+```
+
+### Single execution mode (one-shot)
+
+If you don’t need the long-running readiness container, you can run `wrk2` as a one-shot command via compose (the output will go straight to your console):
+
+```bash
+docker compose -f docker/docker-compose.yml run --rm wrk2 /wrk2/wrk -t2 -c10 -d10s -R1000 http://example.com/
+```
+
+(You can also omit `/wrk2/wrk` and run any other command in the image, but using the full path is explicit.)
+
+### Entrypoint startup logs (bind address / container IP)
+
+On startup, the container entrypoint prints a small banner to help debugging:
+
+- readiness bind address: `WRK2_READY_BIND` (defaults to `0.0.0.0`)
+- container IP(s)
+- ready URL hints (inside container, bind, and host)
+
+If you set `WRK2_READY_BIND=127.0.0.1`, readiness becomes loopback-only and won’t be reachable via published ports.
+
+

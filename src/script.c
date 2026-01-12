@@ -7,6 +7,21 @@
 #include "stats.h"
 #include "zmalloc.h"
 
+static void script_fatal_lua(lua_State *L, const char *context) {
+    const char *msg = lua_tostring(L, -1);
+    if (!msg) msg = "(no error message)";
+
+    const char *lua_path = getenv("LUA_PATH");
+    if (!lua_path) lua_path = "(not set)";
+
+    fprintf(stderr,
+            "Lua error during %s: %s\n"
+            "Hint: ensure wrk.lua is on the Lua module path (require(\"wrk\") must succeed).\n"
+            "Current LUA_PATH=%s\n",
+            context, msg, lua_path);
+    exit(2);
+}
+
 typedef struct {
     char *name;
     int   type;
@@ -48,7 +63,17 @@ static const struct luaL_reg threadlib[] = {
 lua_State *script_create(char *file, char *url, char **headers) {
     lua_State *L = luaL_newstate();
     luaL_openlibs(L);
-    (void) luaL_dostring(L, "wrk = require \"wrk\"");
+
+    if (luaL_dostring(L, "wrk = require \"wrk\"")) {
+        script_fatal_lua(L, "initializing built-in wrk module");
+    }
+
+    lua_getglobal(L, "wrk");
+    if (!lua_istable(L, -1)) {
+        fprintf(stderr, "Lua error: global 'wrk' is not a table after require('wrk')\n");
+        exit(2);
+    }
+    lua_pop(L, 1);
 
     luaL_newmetatable(L, "wrk.addr");
     luaL_register(L, NULL, addrlib);
@@ -93,7 +118,8 @@ lua_State *script_create(char *file, char *url, char **headers) {
 
     if (file && luaL_dofile(L, file)) {
         const char *cause = lua_tostring(L, -1);
-        fprintf(stderr, "%s: %s\n", file, cause);
+        fprintf(stderr, "%s: %s\n", file, cause ? cause : "(unknown error)");
+        exit(2);
     }
 
     return L;
