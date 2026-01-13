@@ -726,3 +726,97 @@ Example 2: [1.4 second ^Z artifact introduced on the httpd server]:
     Transfer/sec:    676.57KB
 
 [CO example]:https://raw.github.com/giltene/wrk2/master/CoordinatedOmission/wrk2_CleanVsCO.png "Coordinated Omission example"
+
+## Docker
+
+This repo includes a multi-stage Docker build under `docker/`.
+
+### Docker Build
+
+Build with BuildKit + buildx (recommended):
+
+```powershell
+docker buildx build -f docker/Dockerfile -t wrk2:local .
+```
+
+If you don't have buildx available, you can fall back to classic build (slower, less caching):
+
+```bash
+docker build -f docker/Dockerfile -t wrk2:local .
+```
+
+### Docker Compose
+
+The compose setup builds the image and starts a long-running container that exposes the readiness endpoint on the host:
+
+- container: `0.0.0.0:3003`
+- host: `localhost:3003`
+
+Start it:
+
+```bash
+docker compose -f docker/docker-compose.yml up -d --build
+```
+
+Readiness check:
+
+```bash
+curl http://localhost:3003/ready
+```
+
+View container logs:
+
+```bash
+docker logs -f wrk2
+```
+
+Important note about logs:
+- If you run `/wrk2/wrk` via an interactive `docker exec -it ...` session, the output is attached to that exec TTY and won't show up in `docker logs`.
+- If you want the benchmark output to land in Docker logs, do **not** allocate a TTY:
+
+```bash
+docker exec wrk2 /wrk2/wrk -t2 -c10 -d10s -R1000 http://example.com/
+```
+
+### Single execution mode (one-shot)
+
+If you don't need the long-running readiness container, you can run `wrk2` as a one-shot command via compose (output goes straight to your console):
+
+```bash
+docker compose -f docker/docker-compose.yml run --rm wrk2 /wrk2/wrk -t2 -c10 -d10s -R1000 http://example.com/
+```
+
+(You can also omit `/wrk2/wrk` and run any other command in the image, but using the full path is explicit.)
+
+### Entrypoint startup logs (bind address / container IP)
+
+When the container starts with no command, the entrypoint prints helpful debug info:
+
+- bind address/port used for readiness (`WRK2_READY_BIND`, `WRK2_READY_PORT`)
+- best-effort container IP(s)
+- example URLs for the readiness probe
+
+If you set `WRK2_READY_BIND=127.0.0.1`, readiness becomes loopback-only and won’t be reachable via published ports.
+
+## Readiness endpoint
+
+wrk2 is primarily an HTTP client load generator and does not normally expose any HTTP server endpoints.
+
+For Docker-based workflows, this repo ships a tiny readiness endpoint **implemented by BusyBox `httpd` in the container entrypoint**.
+
+- Endpoint: `GET /ready`
+- Response: HTTP `200` with body `{"status":"UP"}`
+- Default port: `3003`
+
+Notes:
+- The readiness endpoint exists to support container orchestrators / port checks.
+- It is intentionally minimal and static.
+- Bind address and port are controlled via environment variables:
+  - `WRK2_READY_BIND` (default `0.0.0.0`)
+  - `WRK2_READY_PORT` (default `3003`)
+
+Quick test:
+
+```bash
+curl http://localhost:3003/ready
+```

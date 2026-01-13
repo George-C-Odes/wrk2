@@ -1,0 +1,15 @@
+services:
+  wrk2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: wrk2:local
+    container_name: wrk2
+    working_dir: /wrk2
+    ports:
+      - "3003:3003"
+    restart: no
+    pull_policy: never
+    environment:
+      WRK2_READY_BIND: 0.0.0.0
+      WRK2_READY_PORT: 3003
