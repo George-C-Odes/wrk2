@@ -273,25 +273,6 @@
   request, and use of response() will necessarily reduce the amount of load
   that can be generated.
 
-## Readiness endpoint (optional)
-
-wrk2 is primarily an HTTP client load generator and does not normally expose any HTTP server endpoints.
-
-For environments that need a simple in-process readiness probe, wrk2 can optionally start a tiny HTTP listener:
-
-- Enable with: `--ready-port <port>`
-- Endpoint: `GET /ready`
-- Response: HTTP `200` with body `{"status":"UP"}`
-
-Binding:
-- By default the readiness server binds to `0.0.0.0` (so Docker port publishing works).
-- To bind to loopback only, set `WRK2_READY_BIND=127.0.0.1`.
-
-Notes:
-- The readiness listener is intentionally minimal.
-- Implemented with POSIX sockets/pthreads.
-
-
 ## Acknowledgements
 
   wrk2 is obviously based on wrk, and credit goes to wrk's authors for
@@ -752,25 +733,23 @@ This repo includes a multi-stage Docker build under `docker/`.
 
 ### Docker Build
 
-Build with buildkit (recommended):
+Build with BuildKit + buildx (recommended):
+
 ```powershell
 docker buildx build -f docker/Dockerfile -t wrk2:local .
 ```
 
-Build without buildkit present (slower):
+If you don't have buildx available, you can fall back to classic build (slower, less caching):
+
 ```bash
 docker build -f docker/Dockerfile -t wrk2:local .
 ```
 
 ### Docker Compose
 
-You can run wrk2 via docker compose.
+The compose setup builds the image and starts a long-running container that exposes the readiness endpoint on the host:
 
-Compose will include a build if the image is not present.
-
-The default compose setup starts `wrk2` in readiness-only mode and maps it to the host:
-
-- container: `:3003`
+- container: `0.0.0.0:3003`
 - host: `localhost:3003`
 
 Start it:
@@ -779,19 +758,21 @@ Start it:
 docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-Healthcheck:
+Readiness check:
 
 ```bash
 curl http://localhost:3003/ready
 ```
 
-All output from the container's main process is written to the Docker logs (container stdout/stderr). For example:
+View container logs:
 
 ```bash
 docker logs -f wrk2
 ```
 
-Note: if you run `/wrk2/wrk` via an interactive `docker exec -it ...` session, the output is attached to that exec TTY and will not necessarily appear in `docker logs`. If you want the benchmark output to end up in Docker logs, run without allocating a TTY, e.g.:
+Important note about logs:
+- If you run `/wrk2/wrk` via an interactive `docker exec -it ...` session, the output is attached to that exec TTY and won't show up in `docker logs`.
+- If you want the benchmark output to land in Docker logs, do **not** allocate a TTY:
 
 ```bash
 docker exec wrk2 /wrk2/wrk -t2 -c10 -d10s -R1000 http://example.com/
@@ -799,7 +780,7 @@ docker exec wrk2 /wrk2/wrk -t2 -c10 -d10s -R1000 http://example.com/
 
 ### Single execution mode (one-shot)
 
-If you don’t need the long-running readiness container, you can run `wrk2` as a one-shot command via compose (the output will go straight to your console):
+If you don't need the long-running readiness container, you can run `wrk2` as a one-shot command via compose (output goes straight to your console):
 
 ```bash
 docker compose -f docker/docker-compose.yml run --rm wrk2 /wrk2/wrk -t2 -c10 -d10s -R1000 http://example.com/
@@ -809,12 +790,33 @@ docker compose -f docker/docker-compose.yml run --rm wrk2 /wrk2/wrk -t2 -c10 -d1
 
 ### Entrypoint startup logs (bind address / container IP)
 
-On startup, the container entrypoint prints a small banner to help debugging:
+When the container starts with no command, the entrypoint prints helpful debug info:
 
-- readiness bind address: `WRK2_READY_BIND` (defaults to `0.0.0.0`)
-- container IP(s)
-- ready URL hints (inside container, bind, and host)
+- bind address/port used for readiness (`WRK2_READY_BIND`, `WRK2_READY_PORT`)
+- best-effort container IP(s)
+- example URLs for the readiness probe
 
 If you set `WRK2_READY_BIND=127.0.0.1`, readiness becomes loopback-only and won’t be reachable via published ports.
 
+## Readiness endpoint
 
+wrk2 is primarily an HTTP client load generator and does not normally expose any HTTP server endpoints.
+
+For Docker-based workflows, this repo ships a tiny readiness endpoint **implemented by BusyBox `httpd` in the container entrypoint**.
+
+- Endpoint: `GET /ready`
+- Response: HTTP `200` with body `{"status":"UP"}`
+- Default port: `3003`
+
+Notes:
+- The readiness endpoint exists to support container orchestrators / port checks.
+- It is intentionally minimal and static.
+- Bind address and port are controlled via environment variables:
+  - `WRK2_READY_BIND` (default `0.0.0.0`)
+  - `WRK2_READY_PORT` (default `3003`)
+
+Quick test:
+
+```bash
+curl http://localhost:3003/ready
+```

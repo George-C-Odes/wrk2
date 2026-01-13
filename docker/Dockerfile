@@ -42,7 +42,6 @@ RUN --mount=type=cache,target=/wrk2/obj \
     compile http_parser; \
     compile tinymt64; \
     compile hdr_histogram; \
-    compile ready_server; \
     cc -o wrk obj/*.o $LIBS
 
 # --- Stage 2: Minimal runtime -------------------------------------------------
@@ -50,6 +49,7 @@ FROM alpine:3.23.2 as runtime
 
 RUN --mount=type=cache,target=/var/cache/apk \
     apk add --no-cache \
+    busybox-extras \
     ca-certificates \
     luajit \
     libssl3 \

@@ -1,0 +1,7 @@
+This file is intentionally left as a disabled placeholder.
+If you need the old implementation, recover it from git history.
+
+providing /ready via BusyBox httpd at container runtime.
+The previous readiness HTTP server implementation was removed in favor of
+
+

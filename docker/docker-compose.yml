@@ -8,5 +8,8 @@ services:
     working_dir: /wrk2
     ports:
       - "3003:3003"
-    restart: "no"
+    restart: no
     pull_policy: never
+    environment:
+      WRK2_READY_BIND: 0.0.0.0
+      WRK2_READY_PORT: 3003
